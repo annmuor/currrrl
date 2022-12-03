@@ -208,6 +208,10 @@ impl App {
             if let Some(ua) = self.ua.as_ref() {
                 builder = builder.header("User-Agent", ua);
             }
+            if let Some(auth) = self.auth.as_ref() {
+                let encoded = base64::encode(auth);
+                builder = builder.header("Authorization", format!("Basic {}", encoded));
+            }
             let client =
                 Client::builder().build::<_, hyper::Body>(hyper_tls::HttpsConnector::new());
             let mut result: Response<Body>;
