@@ -184,6 +184,7 @@ impl App {
                 }
             }),
         };
+        let client = Client::builder().build::<_, hyper::Body>(hyper_tls::HttpsConnector::new());
         while let Some(mut url) = self.urls.pop() {
             let method = self.method.as_ref().unwrap();
             if !url.contains("://") {
@@ -209,8 +210,7 @@ impl App {
                 let encoded = base64::encode(auth);
                 builder = builder.header("Authorization", format!("Basic {}", encoded));
             }
-            let client =
-                Client::builder().build::<_, hyper::Body>(hyper_tls::HttpsConnector::new());
+
             let mut result = match (self.upload_file.as_ref(), self.data.as_ref()) {
                 (Some(_), Some(_)) => {
                     self.error_str(
