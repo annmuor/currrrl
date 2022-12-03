@@ -1,11 +1,12 @@
-use crate::utils::{read_file_async, read_file_lines_sync};
-use hyper::body::{Bytes, HttpBody};
-use hyper::{Body, Client, Response};
 use std::env;
 use std::process::exit;
+
+use hyper::body::{Bytes, HttpBody};
+use hyper::{Body, Client};
 use tokio::fs::File;
 use tokio::io::{stdout, AsyncReadExt, AsyncWriteExt};
-use tokio::task::JoinHandle;
+
+use crate::utils::{read_file_async, read_file_lines_sync};
 
 #[derive(Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -155,13 +156,7 @@ impl App {
         if app_config.ua.is_none() {
             app_config.ua = Some(format!("currrrl/{}", env!("CARGO_PKG_VERSION")));
         }
-        if app_config.data.is_some() && app_config.upload_file.is_some() {
-            app_config.error_str(
-                "Warning: You can only select one HTTP request method! You asked for both PUT",
-            );
-            app_config.error_str("Warning: (-T, --upload-file) and POST (-d, --data).");
-            None?;
-        }
+
         Some(app_config)
     }
     pub(crate) fn error(&self, log: String) {
@@ -174,21 +169,21 @@ impl App {
     }
     pub(crate) async fn run(&mut self) -> anyhow::Result<()> {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1usize);
-        let out: JoinHandle<()>;
-        if let Some(file) = self.output_file.as_ref() {
-            let mut fd = File::create(file).await?;
-            out = tokio::spawn(async move {
-                while let Some(dat) = rx.recv().await {
-                    let _ = fd.write(&dat).await;
-                }
-            });
-        } else {
-            out = tokio::spawn(async move {
+        let out = match self.output_file.as_ref() {
+            Some(file) => {
+                let mut fd = File::create(file).await?;
+                tokio::spawn(async move {
+                    while let Some(dat) = rx.recv().await {
+                        let _ = fd.write(&dat).await;
+                    }
+                })
+            }
+            None => tokio::spawn(async move {
                 while let Some(dat) = rx.recv().await {
                     let _ = stdout().write(&dat).await;
                 }
-            });
-        }
+            }),
+        };
         while let Some(mut url) = self.urls.pop() {
             let method = self.method.as_ref().unwrap();
             if !url.contains("://") {
@@ -214,33 +209,40 @@ impl App {
             }
             let client =
                 Client::builder().build::<_, hyper::Body>(hyper_tls::HttpsConnector::new());
-            let mut result: Response<Body>;
-            if let Some(upload_file) = self.upload_file.as_ref() {
-                let mut fd = File::open(upload_file).await?;
-                let (mut sender, body) = Body::channel();
-                tokio::spawn(async move {
-                    // Reuse this buffer
-                    let mut buf = [0_u8; 1024 * 16];
-                    loop {
-                        let read_count = fd.read(&mut buf).await.unwrap();
-                        if read_count == 0 {
-                            break;
+            let mut result = match (self.upload_file.as_ref(), self.data.as_ref()) {
+                (Some(_), Some(_)) => {
+                    self.error_str(
+                        "Warning: You can only select one HTTP request method! You asked for both PUT",
+                    );
+                    self.error_str("Warning: (-T, --upload-file) and POST (-d, --data).");
+                    exit(-1);
+                }
+                (Some(file), None) => {
+                    let mut fd = File::open(file).await?;
+                    let (mut sender, body) = Body::channel();
+                    tokio::spawn(async move {
+                        // Reuse this buffer
+                        let mut buf = [0_u8; 1024 * 16];
+                        loop {
+                            let read_count = fd.read(&mut buf).await.unwrap();
+                            if read_count == 0 {
+                                break;
+                            }
+                            sender
+                                .send_data(Bytes::copy_from_slice(&buf))
+                                .await
+                                .unwrap();
                         }
-                        sender
-                            .send_data(Bytes::copy_from_slice(&buf))
-                            .await
-                            .unwrap();
-                    }
-                });
-                let request = builder.body(body)?;
-                result = client.request(request).await?;
-            } else if let Some(data) = self.data.as_ref() {
-                let request = builder.body(Body::from(data.clone()))?;
-                result = client.request(request).await?;
-            } else {
-                let request = builder.body(Body::empty())?;
-                result = client.request(request).await?;
-            }
+                    });
+                    client.request(builder.body(body)?).await?
+                }
+                (None, Some(data)) => {
+                    client
+                        .request(builder.body(Body::from(data.clone()))?)
+                        .await?
+                }
+                (None, None) => client.request(builder.body(Body::empty())?).await?,
+            };
             // let's do something with the result
             if self.include_headers {
                 let status_line = format!("{:?} {}\n", result.version(), result.status());
