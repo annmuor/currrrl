@@ -11,3 +11,4 @@ hyper = { version = "0.14.23", features = ["client", "http1", "runtime", "stream
 hyper-tls = "0.5.0"
 tokio = { version = "1.21.2", features = ["full"] }
 anyhow = "1.0.66"
+base64 = "0.13.1"
