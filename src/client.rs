@@ -189,12 +189,7 @@ impl App {
                 }
             });
         }
-        loop {
-            let url = self.urls.pop();
-            if url.is_none() {
-                break;
-            }
-            let mut url = url.unwrap();
+        while let Some(mut url) = self.urls.pop() {
             let method = self.method.as_ref().unwrap();
             if !url.contains("://") {
                 url = format!("http://{}", url);
