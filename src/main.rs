@@ -1,22 +1,22 @@
 use std::env;
 use std::process::exit;
 
-use hyper::{Body, Client, Response};
 use hyper::body::{Bytes, HttpBody};
+use hyper::{Body, Client, Response};
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, stdout};
+use tokio::io::{stdout, AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinHandle;
 
 use crate::utils::{read_file_async, read_file_lines_sync};
 
 mod utils;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 #[non_exhaustive]
 enum LogStatus {
-    FULL,
-    NORMAL,
-    SILENT,
+    Full,
+    Normal,
+    Silent,
 }
 
 #[derive(Debug)]
@@ -39,7 +39,7 @@ struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            log: LogStatus::NORMAL,
+            log: LogStatus::Normal,
             method: None,
             headers: None,
             output_file: None,
@@ -56,7 +56,6 @@ impl Default for AppConfig {
     }
 }
 
-
 impl AppConfig {
     async fn new(options: &getopts::Options) -> Option<Self> {
         let args = env::args().collect::<Vec<String>>();
@@ -72,27 +71,31 @@ impl AppConfig {
             eprintln!("{}", options.usage("currrrl is the best CURL alternative"));
             None?;
         }
-        if config.free.len() == 0 {
+        if config.free.is_empty() {
             eprintln!("currrrl: no URL specified!");
             None?;
         }
         let mut app_config = AppConfig::default();
         if config.opt_present("s") {
-            app_config.log = LogStatus::SILENT;
+            app_config.log = LogStatus::Silent;
         } else if config.opt_present("v") {
-            app_config.log = LogStatus::FULL;
+            app_config.log = LogStatus::Full;
         }
         if config.opt_present("i") {
             app_config.include_headers = true;
         }
         if config.opt_present("recursive") {
             app_config.recursive = true;
+            eprintln!("Warning: not implemented yet");
+            None?;
         }
         if config.opt_present("L") {
             app_config.follow_redirects = true;
         }
         if config.opt_present("O") {
             app_config.remote_name = true;
+            eprintln!("Warning: not implemented yet");
+            None?;
         }
         if let Some(x) = config.opt_str("X") {
             app_config.method = Some(x);
@@ -110,26 +113,38 @@ impl AppConfig {
             app_config.upload_file = Some(x)
         }
         if let Some(x) = config.opt_str("d") {
-            if x.starts_with("@") {
-                app_config.data = read_file_async(&x).await.map_err(|e| {
-                    eprintln!("Warning: can't read data from file: {}", e.to_string());
-                    exit(0);
-                }).ok();
+            if x.starts_with('@') {
+                app_config.data = read_file_async(&x)
+                    .await
+                    .map_err(|e| {
+                        if app_config.log != LogStatus::Silent {
+                            eprintln!("Warning: can't read data from file: {}", e);
+                        }
+                        exit(-1);
+                    })
+                    .ok();
             } else {
                 app_config.data = Some(x.into());
             }
         }
         let headers = config.opt_strs("H");
-        if headers.len() > 0 {
-            app_config.headers = Some(headers.into_iter().map(|f| {
-                if f.starts_with('@') {
-                    // TODO: make this async? async closures are unstable?
-                    read_file_lines_sync(&f).unwrap_or_else(|_| vec![])
-                } else {
-                    // a bit costly? Yes? No?
-                    vec![f]
-                }
-            }).filter(|x| !x.is_empty()).flatten().collect());
+        if !headers.is_empty() {
+            app_config.headers = Some(
+                headers
+                    .into_iter()
+                    .map(|f| {
+                        if f.starts_with('@') {
+                            // TODO: make this async? async closures are unstable?
+                            read_file_lines_sync(&f).unwrap_or_else(|_| vec![])
+                        } else {
+                            // a bit costly? Yes? No?
+                            vec![f]
+                        }
+                    })
+                    .filter(|x| !x.is_empty())
+                    .flatten()
+                    .collect(),
+            );
         }
         app_config.urls = config.free;
         // let's set some defaults
@@ -146,8 +161,12 @@ impl AppConfig {
             app_config.ua = Some(format!("currrrl/{}", env!("CARGO_PKG_VERSION")));
         }
         if app_config.data.is_some() && app_config.upload_file.is_some() {
-            eprintln!("Warning: You can only select one HTTP request method! You asked for both PUT");
-            eprintln!("Warning: (-T, --upload-file) and POST (-d, --data).");
+            if app_config.log != LogStatus::Silent {
+                eprintln!(
+                    "Warning: You can only select one HTTP request method! You asked for both PUT"
+                );
+                eprintln!("Warning: (-T, --upload-file) and POST (-d, --data).");
+            }
             None?;
         }
         Some(app_config)
@@ -193,8 +212,8 @@ impl AppConfig {
             if let Some(ua) = self.ua.as_ref() {
                 builder = builder.header("User-Agent", ua);
             }
-            let client = Client::builder()
-                .build::<_, hyper::Body>(hyper_tls::HttpsConnector::new());
+            let client =
+                Client::builder().build::<_, hyper::Body>(hyper_tls::HttpsConnector::new());
             let mut result: Response<Body>;
             if let Some(upload_file) = self.upload_file.as_ref() {
                 let mut fd = File::open(upload_file).await?;
@@ -207,7 +226,10 @@ impl AppConfig {
                         if read_count == 0 {
                             break;
                         }
-                        sender.send_data(Bytes::copy_from_slice(&buf)).await.unwrap();
+                        sender
+                            .send_data(Bytes::copy_from_slice(&buf))
+                            .await
+                            .unwrap();
                     }
                 });
                 let request = builder.body(body)?;
@@ -219,8 +241,6 @@ impl AppConfig {
                 let request = builder.body(Body::empty())?;
                 result = client.request(request).await?;
             }
-            // let's check for output first
-
             // let's do something with the result
             if self.include_headers {
                 let status_line = format!("{:?} {}\n", result.version(), result.status());
@@ -234,20 +254,21 @@ impl AppConfig {
             if result.status().is_redirection() && self.follow_redirects {
                 if let Some(x) = result.headers().get("location") {
                     let mut s = x.to_str()?.to_string();
-                    if s.starts_with("/") {
-                        s = format!("{}://{}{}", uri.scheme_str().unwrap(), uri.host().unwrap(), s);
+                    if s.starts_with('/') {
+                        s = format!(
+                            "{}://{}{}",
+                            uri.scheme_str().unwrap(),
+                            uri.host().unwrap(),
+                            s
+                        );
                     }
                     self.urls.push(s);
                     continue; // skip next stuff - don't print body eh
                 }
             }
             let body = result.body_mut();
-            loop {
-                if let Some(data) = body.data().await {
-                    tx.send(data?.to_vec()).await?;
-                } else {
-                    break;
-                }
+            while let Some(data) = body.data().await {
+                tx.send(data?.to_vec()).await?;
             }
         }
         drop(tx); // close channel
@@ -258,19 +279,42 @@ impl AppConfig {
 
 async fn collect_options() -> Option<AppConfig> {
     let mut opts = getopts::Options::new();
-    opts.optmulti("H", "header", "Pass custom header(s) to server", "header/@file");
+    opts.optmulti(
+        "H",
+        "header",
+        "Pass custom header(s) to server",
+        "header/@file",
+    );
     opts.optopt("d", "data", "HTTP POST data", "data");
     opts.optopt("X", "request", "Specify request method to use", "method");
     opts.optopt("o", "output", "Write to file instead of stdout", "file");
     opts.optopt("u", "user", "Server user and password", "user:password");
-    opts.optopt("A", "user-agent", "Send User-Agent <name> to server", "name");
-    opts.optopt("T", "upload-tile", "Transfer local FILE to destination", "file");
-    opts.optflag("O", "remote-name", "Write output to a file named as the remote file");
+    opts.optopt(
+        "A",
+        "user-agent",
+        "Send User-Agent <name> to server",
+        "name",
+    );
+    opts.optopt(
+        "T",
+        "upload-tile",
+        "Transfer local FILE to destination",
+        "file",
+    );
+    opts.optflag(
+        "O",
+        "remote-name",
+        "Write output to a file named as the remote file",
+    );
     opts.optflag("L", "location", "Follow redirects");
     opts.optflag("v", "verbose", "Make the operation more talkative");
     opts.optflag("V", "version", "Show version number and quit");
     opts.optflag("s", "silent", "Silent mode");
-    opts.optflag("i", "include", "Include protocol response headers in the output");
+    opts.optflag(
+        "i",
+        "include",
+        "Include protocol response headers in the output",
+    );
     opts.optflag("", "recursive", "Download all found as wget do");
     opts.optflagopt("h", "help", "Get help for commands", "command");
     AppConfig::new(&opts).await
@@ -281,10 +325,11 @@ async fn main() -> anyhow::Result<()> {
     if let Some(mut app) = collect_options().await {
         let f = tokio::spawn(async move {
             let _ = app.run().await.map_err(|e| {
-                eprintln!("Error: {}", e.to_string());
+                if app.log != LogStatus::Silent {
+                    eprintln!("Warning: {}", e);
+                }
                 exit(-1);
-            }
-            );
+            });
         });
         tokio::try_join!(f)?;
     } else {
