@@ -197,6 +197,8 @@ impl App {
                         let value = h[key + 1..].trim();
                         let key = &h[..key];
                         builder = builder.header(key, value)
+                    } else {
+                        builder = builder.header(h, "")
                     }
                 }
             }
