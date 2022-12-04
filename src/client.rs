@@ -117,7 +117,9 @@ impl App {
         if let Some(x) = config.opt_str("T") {
             app_config.upload_file = Some(x)
         }
-        if let Some(x) = config.opt_str("d") {
+        if let Some(x) = config.opt_str("data-raw") {
+            app_config.data = Some(x.into());
+        } else if let Some(x) = config.opt_str("d") {
             if x.starts_with('@') {
                 app_config.data = read_file_async(&x)
                     .await

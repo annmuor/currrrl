@@ -14,6 +14,7 @@ async fn collect_options() -> Option<App> {
         "header/@file",
     );
     opts.optopt("d", "data", "HTTP POST data", "data");
+    opts.optopt("", "data-raw", "HTTP POST data but without @", "data");
     opts.optopt("X", "request", "Specify request method to use", "method");
     opts.optopt("o", "output", "Write to file instead of stdout", "file");
     opts.optopt("u", "user", "Server user and password", "user:password");
@@ -45,6 +46,7 @@ async fn collect_options() -> Option<App> {
         "Include protocol response headers in the output",
     );
     opts.optflag("", "recursive", "Download all found as wget do");
+    opts.optflag("", "compressed", "For greater compatibility with curl");
     opts.optflagopt("h", "help", "Get help for commands", "command");
     App::new(&opts).await
 }
