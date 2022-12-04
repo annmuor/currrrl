@@ -51,15 +51,20 @@ async fn collect_options() -> Option<App> {
     App::new(&opts).await
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    if let Some(mut app) = collect_options().await {
-        let _ = app.run().await.map_err(|e| {
-            app.error(format!("Warning: {}", e));
+fn main() -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
+    runtime.block_on(async {
+        if let Some(mut app) = collect_options().await {
+            let _ = app.run().await.map_err(|e| {
+                app.error(format!("Warning: {}", e));
+                exit(-1);
+            });
+        } else {
             exit(-1);
-        });
-    } else {
-        exit(-1);
-    }
+        }
+    });
     Ok(())
 }

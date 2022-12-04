@@ -1,12 +1,16 @@
 use std::env;
 use std::process::exit;
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use hyper::body::{Bytes, HttpBody};
 use hyper::client::HttpConnector;
 use hyper::{Body, Client};
+use hyper_rustls::ConfigBuilderExt;
+use rustls::client::{ServerCertVerified, ServerCertVerifier};
+use rustls::{Certificate, Error, ServerName};
 use tokio::fs::File;
 use tokio::io::{stdout, AsyncReadExt, AsyncWriteExt};
-use tokio_native_tls::{native_tls, TlsConnector};
 
 use crate::utils::{read_file_async, read_file_lines_sync};
 
@@ -57,6 +61,20 @@ impl Default for App {
     }
 }
 
+struct ZeroVerify {}
+impl ServerCertVerifier for ZeroVerify {
+    fn verify_server_cert(
+        &self,
+        _: &Certificate,
+        _: &[Certificate],
+        _: &ServerName,
+        _: &mut dyn Iterator<Item = &[u8]>,
+        _: &[u8],
+        _: SystemTime,
+    ) -> Result<ServerCertVerified, Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+}
 impl App {
     pub(crate) async fn new(options: &getopts::Options) -> Option<Self> {
         let args = env::args().collect::<Vec<String>>();
@@ -195,18 +213,29 @@ impl App {
         };
         let client = {
             let tls_connector = match self.insecure {
-                true => native_tls::TlsConnector::builder()
-                    .danger_accept_invalid_hostnames(true)
-                    .danger_accept_invalid_certs(true)
+                true => {
+                    let mut client_config = rustls::client::ClientConfig::builder()
+                        .with_safe_defaults()
+                        .with_native_roots()
+                        .with_no_client_auth();
+                    client_config
+                        .dangerous()
+                        .set_certificate_verifier(Arc::new(ZeroVerify {}));
+                    hyper_rustls::HttpsConnectorBuilder::new()
+                        .with_tls_config(client_config)
+                        .https_or_http()
+                        .enable_http1()
+                        .build()
+                }
+                false => hyper_rustls::HttpsConnectorBuilder::new()
+                    .with_native_roots()
+                    .https_or_http()
+                    .enable_http1()
                     .build(),
-                false => native_tls::TlsConnector::new(),
-            }?;
+            };
             let mut http_connector = HttpConnector::new();
             http_connector.enforce_http(false);
-            Client::builder().build::<_, hyper::Body>(hyper_tls::HttpsConnector::from((
-                http_connector,
-                TlsConnector::from(tls_connector),
-            )))
+            Client::builder().build::<_, hyper::Body>(tls_connector)
         };
         while let Some(mut url) = self.urls.pop() {
             let method = self.method.as_ref().unwrap();
