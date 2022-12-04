@@ -225,7 +225,9 @@ impl App {
                 }
             }
             if let Some(ua) = self.ua.as_ref() {
-                builder = builder.header("User-Agent", ua);
+                if !builder.headers_ref().unwrap().contains_key("User-Agent") {
+                    builder = builder.header("User-Agent", ua);
+                }
             }
             if let Some(auth) = self.auth.as_ref() {
                 let encoded = base64::encode(auth);
