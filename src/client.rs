@@ -2,9 +2,11 @@ use std::env;
 use std::process::exit;
 
 use hyper::body::{Bytes, HttpBody};
+use hyper::client::HttpConnector;
 use hyper::{Body, Client};
 use tokio::fs::File;
 use tokio::io::{stdout, AsyncReadExt, AsyncWriteExt};
+use tokio_native_tls::{native_tls, TlsConnector};
 
 use crate::utils::{read_file_async, read_file_lines_sync};
 
@@ -31,6 +33,7 @@ pub(crate) struct App {
     recursive: bool,
     remote_name: bool,
     follow_redirects: bool,
+    insecure: bool,
 }
 
 impl Default for App {
@@ -49,6 +52,7 @@ impl Default for App {
             recursive: false,
             remote_name: false,
             follow_redirects: false,
+            insecure: false,
         }
     }
 }
@@ -81,6 +85,9 @@ impl App {
         }
         if config.opt_present("i") {
             app_config.include_headers = true;
+        }
+        if config.opt_present("k") {
+            app_config.insecure = true;
         }
         if config.opt_present("recursive") {
             app_config.recursive = true;
@@ -184,7 +191,21 @@ impl App {
                 }
             }),
         };
-        let client = Client::builder().build::<_, hyper::Body>(hyper_tls::HttpsConnector::new());
+        let client = {
+            let tls_connector = match self.insecure {
+                true => native_tls::TlsConnector::builder()
+                    .danger_accept_invalid_hostnames(true)
+                    .danger_accept_invalid_certs(true)
+                    .build(),
+                false => native_tls::TlsConnector::new(),
+            }?;
+            let mut http_connector = HttpConnector::new();
+            http_connector.enforce_http(false);
+            Client::builder().build::<_, hyper::Body>(hyper_tls::HttpsConnector::from((
+                http_connector,
+                TlsConnector::from(tls_connector),
+            )))
+        };
         while let Some(mut url) = self.urls.pop() {
             let method = self.method.as_ref().unwrap();
             if !url.contains("://") {

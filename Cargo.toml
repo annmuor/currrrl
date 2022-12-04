@@ -12,3 +12,4 @@ hyper-tls = "0.5.0"
 tokio = { version = "1.21.2", features = ["full"] }
 anyhow = "1.0.66"
 base64 = "0.13.1"
+tokio-native-tls = "0.3.0"

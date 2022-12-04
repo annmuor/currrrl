@@ -38,6 +38,7 @@ async fn collect_options() -> Option<App> {
     opts.optflag("v", "verbose", "Make the operation more talkative");
     opts.optflag("V", "version", "Show version number and quit");
     opts.optflag("s", "silent", "Silent mode");
+    opts.optflag("k", "insecure", "Allow insecure server connections");
     opts.optflag(
         "i",
         "include",
