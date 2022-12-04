@@ -19,12 +19,13 @@ pub(crate) fn read_file_lines_sync(filename: &str) -> anyhow::Result<Vec<String>
     let fd = File::open(local)?;
     let mut reader = BufReader::new(fd);
     let mut result = Vec::new();
+    let mut s = String::new();
     loop {
-        let mut s = String::new();
         if reader.read_line(&mut s)? == 0usize {
             break;
         }
         result.push(s.trim().to_string());
+        s.clear();
     }
     Ok(result)
 }

@@ -1,5 +1,7 @@
-use crate::client::App;
 use std::process::exit;
+
+use crate::client::App;
+
 mod client;
 mod utils;
 
@@ -49,13 +51,10 @@ async fn collect_options() -> Option<App> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if let Some(mut app) = collect_options().await {
-        let f = tokio::spawn(async move {
-            let _ = app.run().await.map_err(|e| {
-                app.error(format!("Warning: {}", e));
-                exit(-1);
-            });
+        let _ = app.run().await.map_err(|e| {
+            app.error(format!("Warning: {}", e));
+            exit(-1);
         });
-        tokio::try_join!(f)?;
     } else {
         exit(-1);
     }
